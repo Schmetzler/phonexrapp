@@ -1,3 +1,18 @@
+# PhoneXR App
+
+The android and (sometimes later) ios app for using your smartphone as VR Device.
+The idea is to send video data from the camera to the PC do some calculations there
+(like handtracking and positioning) put the data into some PCVR framework 
+(like OpenHMD or SteamVR) and put the resulting images back to the device where the 
+Cardboard SDK will be used to do the distortion.
+
+### Notes
+
+* Currently working on Passthrough mode with the Camera and Google Cardboard SDK.
+* Removed the third party unity stuff as it is not used in this context
+* I will try to keep the SDK on par with upstream
+* Found out that with my Phone (Xiaomi MI 8 Lite) CameraAPI1 gives more FOV for the camera instead of CameraAPI 2 (because of `setRecordingHint(false)`)
+
 Cardboard SDK
 =============
 Copyright 2019 Google LLC

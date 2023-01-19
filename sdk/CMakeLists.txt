@@ -56,16 +56,16 @@ file(GLOB rendering_vulkan_srcs "rendering/android/*.cc")
 file(GLOB rendering_vulkan_wrapper_srcs "rendering/android/vulkan/*.cc")
 
 # === Cardboard Unity JNI ===
-file(GLOB cardboard_unity_jni_srcs "unity/android/*.cc")
+#file(GLOB cardboard_unity_jni_srcs "unity/android/*.cc")
 
 # === Cardboard Unity Wrapper ===
-file(GLOB cardboard_xr_unity_srcs
-  "unity/xr_unity_plugin/*.cc"
-  "unity/xr_unity_plugin/vulkan/*.cc"
-)
+#file(GLOB cardboard_xr_unity_srcs
+#  "unity/xr_unity_plugin/*.cc"
+#  "unity/xr_unity_plugin/vulkan/*.cc"
+#)
 
 # === Cardboard XR Provider for Unity ===
-file(GLOB cardboard_xr_provider_srcs "unity/xr_provider/*.cc")
+#file(GLOB cardboard_xr_provider_srcs "unity/xr_provider/*.cc")
 
 # Output binary
 add_library(GfxPluginCardboard SHARED
@@ -85,15 +85,16 @@ add_library(GfxPluginCardboard SHARED
     ${rendering_vulkan_srcs}
     ${rendering_vulkan_wrapper_srcs}
     # Cardboard Unity JNI sources
-    ${cardboard_unity_jni_srcs}
+    #${cardboard_unity_jni_srcs}
     # Cardboard Unity Wrapper sources
-    ${cardboard_xr_unity_srcs}
+    #${cardboard_xr_unity_srcs}
     # Cardboard XR Provider for Unity sources
-    ${cardboard_xr_provider_srcs})
+    #${cardboard_xr_provider_srcs}
+)
 
 # Includes
-target_include_directories(GfxPluginCardboard
-    PRIVATE ../third_party/unity_plugin_api)
+#target_include_directories(GfxPluginCardboard
+#    PRIVATE ../third_party/unity_plugin_api)
 
 # #vulkan This is required for Vulkan rendering. Remove the following line if
 # Vulkan rendering is not needed.
