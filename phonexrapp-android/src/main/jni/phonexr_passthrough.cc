@@ -1,20 +1,48 @@
-//
-// Created by domwet on 19.01.23.
-//
+/*
+ * Copyright 2019 Google LLC
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 #include "phonexr_passthrough.h"
+
+#include <android/asset_manager.h>
+#include <android/asset_manager_jni.h>
+#include <android/log.h>
+
+#include <array>
 #include <cmath>
+#include <fstream>
 #include <GLES2/gl2ext.h>
-#include <GLES/gl.h>
+
+#include "cardboard.h"
 
 namespace ndk_phonexr {
 
-    static GLuint positionH = 0;
-    static GLuint texCoordsH = 0;
-    static GLuint samplerH = 0;
-    static GLuint mvpTransH = 0;
-
     namespace {
+        float plane_vert[] = {
+                0.0,0.0,0.0,
+                1.0,0.0,0.0,
+                1.0,1.0,0.0,
+                0.0,1.0,0.0
+        };
+
+        float plane_tex_coords[] = {
+                0.0,0.0,
+                0.0,1.0,
+                1.0,1.0,
+                1.0,0.0
+        };
 
 // The objects are about 1 meter in radius, so the min/max target distance are
 // set so that the objects are always within the room (which is about 5 meters
@@ -35,28 +63,32 @@ namespace ndk_phonexr {
 // Number of different possible targets
         constexpr int kTargetMeshCount = 3;
 
-        constexpr char VERTEX_SHADER_SRC[] = R"SRC(
-      attribute vec4 position;
-      attribute vec4 texCoords;
-      varying vec2 fragCoord;
-      void main() {
-        fragCoord = vec2(1.0 - texCoords.s, texCoords.t);
-        gl_Position = position;
-      }
-)SRC";
-            constexpr char FRAGMENT_SHADER_SRC[] = R"SRC(
-      #extension GL_OES_EGL_image_external : require
-      precision mediump float;
-      uniform samplerExternalOES sampler;
-      varying vec2 fragCoord;
-      void main() {
-        gl_FragColor = texture2D(sampler, fragCoord);
-      }
-)SRC";
+// Simple shaders to render .obj files without any lighting.
+        constexpr const char* kObjVertexShader =
+                R"glsl(
+    uniform mat4 u_MVP;
+    attribute vec4 a_Position;
+    attribute vec2 a_UV;
+    varying vec2 v_UV;
+
+    void main() {
+      v_UV = a_UV;
+      gl_Position = u_MVP * a_Position;
+    })glsl";
+
+        constexpr const char* kObjFragmentShader =
+                R"glsl(
+    #extension GL_OES_EGL_image_external : require
+    precision mediump float;
+    varying vec2 v_UV;
+    uniform samplerExternalOES sTexture;
+    void main() {
+        gl_FragColor = texture2D(sTexture, v_UV);
+    })glsl";
 
     }  // anonymous namespace
 
-    PhoneXRPassthrough::PhoneXRPassthrough(JavaVM *vm, jobject obj)
+    PhoneXRPassthrough::PhoneXRPassthrough(JavaVM* vm, jobject obj)
             : head_tracker_(nullptr),
               lens_distortion_(nullptr),
               distortion_renderer_(nullptr),
@@ -67,15 +99,15 @@ namespace ndk_phonexr {
               depthRenderBuffer_(0),
               framebuffer_(0),
               texture_(0),
-              cam_texture_(0){
-        vm->GetEnv((void **) &env, JNI_VERSION_1_6);
+              obj_program_(0),
+              obj_position_param_(0),
+              obj_uv_param_(0),
+              obj_modelview_projection_param_(0)) {
+        JNIEnv* env;
+        vm->GetEnv((void**)&env, JNI_VERSION_1_6);
+
         Cardboard_initializeAndroid(vm, obj);
         head_tracker_ = CardboardHeadTracker_create();
-        program_ = createProgram(VERTEX_SHADER_SRC, FRAGMENT_SHADER_SRC);
-        positionH = glGetAttribLocation(program_, "position");
-        texCoordsH = glGetAttribLocation(program_, "texCoords");
-        samplerH = glGetUniformLocation(program_, "sampler");
-        //mvpTransH = glGetUniformLocation(program_, "mvpTransform");
     }
 
     PhoneXRPassthrough::~PhoneXRPassthrough() {
@@ -84,8 +116,36 @@ namespace ndk_phonexr {
         CardboardDistortionRenderer_destroy(distortion_renderer_);
     }
 
-    void PhoneXRPassthrough::setTextureId(GLuint texture) {
-        this->cam_texture_ = texture;
+    GLuint PhoneXRPassthrough::OnSurfaceCreated() {
+        const int obj_vertex_shader =
+                LoadGLShader(GL_VERTEX_SHADER, kObjVertexShader);
+        const int obj_fragment_shader =
+                LoadGLShader(GL_FRAGMENT_SHADER, kObjFragmentShader);
+
+        obj_program_ = glCreateProgram();
+        glAttachShader(obj_program_, obj_vertex_shader);
+        glAttachShader(obj_program_, obj_fragment_shader);
+        glLinkProgram(obj_program_);
+        glUseProgram(obj_program_);
+
+        CHECKGLERROR("Obj program");
+
+        obj_position_param_ = glGetAttribLocation(obj_program_, "a_Position");
+        obj_uv_param_ = glGetAttribLocation(obj_program_, "a_UV");
+        obj_modelview_projection_param_ = glGetUniformLocation(obj_program_, "u_MVP");
+
+        // TODO initialize plane mesh and texture
+        glGenTextures(1, &cam_texture_);
+        glActiveTexture(GL_TEXTURE0);
+
+        glBindTexture(GL_TEXTURE_EXTERNAL_OES, cam_texture_);
+        glTexParameterf(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameterf(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+
+        CHECKGLERROR("OnSurfaceCreated");
+        return cam_texture_;
     }
 
     void PhoneXRPassthrough::SetScreenParams(int width, int height) {
@@ -94,7 +154,7 @@ namespace ndk_phonexr {
         screen_params_changed_ = true;
     }
 
-    void PhoneXRPassthrough::OnDrawFrame(JNIEnv* env, jobject obj, jmethodID method) {
+    void PhoneXRPassthrough::OnDrawFrame() {
         if (!UpdateDeviceParams()) {
             return;
         }
@@ -126,63 +186,19 @@ namespace ndk_phonexr {
 
             Matrix4x4 projection_matrix =
                     GetMatrixFromGlArray(projection_matrices_[eye]);
+            modelview_projection_room_ = projection_matrix * eye_view;
 
-            /*jfloatArray result = env->NewFloatArray(16);
-            jfloat* pose = projection_matrix.ToGlArray().data();
-            env->SetFloatArrayRegion(result,0,16,pose);
-            env->CallVoidMethod(obj, method, result);*/
-
-            drawCameraTexture();
+            // Draw room and target
+            drawPlane();
         }
 
         // Render
         CardboardDistortionRenderer_renderEyeToDisplay(
-                distortion_renderer_, 0, 0, 0,
+                distortion_renderer_, /* target_display = */ 0, /* x = */ 0, /* y = */ 0,
                 screen_width_, screen_height_, &left_eye_texture_description_,
                 &right_eye_texture_description_);
 
         CHECKGLERROR("onDrawFrame");
-    }
-
-    void PhoneXRPassthrough::drawCameraTexture() {
-        constexpr GLfloat vertices[] = {
-                -1.0f, 1.0f,0.0f,
-                1.0f,1.0f, 0.0f,
-                -1.0f,-1.0f, 0.0f,
-                1.0f,-1.0f, 0.0f
-        };
-        constexpr GLfloat texCoords[] = {
-                0.0f, 0.0f, // Lower-left
-                1.0f, 0.0f, // Lower-right
-                0.0f, 1.0f, // Upper-left (order must match the vertices)
-                1.0f, 1.0f  // Upper-right
-        };
-
-
-        GLint vertexComponents = 2;
-        GLenum vertexType = GL_FLOAT;
-        GLboolean normalized = GL_FALSE;
-        GLsizei vertexStride = 0;
-
-        glVertexAttribPointer(positionH,
-                              vertexComponents, vertexType, normalized,
-                              vertexStride, vertices);
-        glEnableVertexAttribArray(positionH);
-        glVertexAttribPointer(texCoordsH, vertexComponents, vertexType, normalized,
-                              vertexStride, texCoords);
-        glEnableVertexAttribArray(texCoordsH);
-
-
-        //glUniformMatrix4fv(mvpTransH, 1,
-        //                   GL_FALSE, mvpTransformArray);
-        glUniform1f(samplerH, 0);
-
-        glUseProgram(program_);
-
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_EXTERNAL_OES, cam_texture_);
-        glDrawArrays(GL_TRIANGLE_STRIP,0,4);
-
     }
 
     void PhoneXRPassthrough::OnPause() { CardboardHeadTracker_pause(head_tracker_); }
@@ -265,7 +281,7 @@ namespace ndk_phonexr {
     }
 
     void PhoneXRPassthrough::GlSetup() {
-        //LOGD("GL SETUP");
+        LOGD("GL SETUP");
 
         if (framebuffer_ != 0) {
             GlTeardown();
@@ -278,6 +294,7 @@ namespace ndk_phonexr {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, screen_width_, screen_height_, 0,
                      GL_RGB, GL_UNSIGNED_BYTE, 0);
 
@@ -321,6 +338,8 @@ namespace ndk_phonexr {
         framebuffer_ = 0;
         glDeleteTextures(1, &texture_);
         texture_ = 0;
+        glDeleteTextures(1, &cam_texture_);
+        cam_texture_ = 0;
 
         CHECKGLERROR("GlTeardown");
     }
@@ -335,4 +354,27 @@ namespace ndk_phonexr {
                Quatf::FromXYZW(&out_orientation[0]).ToMatrix();
     }
 
-}
+     void PhoneXRPassthrough::drawPlane() {
+        glUseProgram(obj_program_);
+
+        std::array<float, 16> room_array = modelview_projection_room_.ToGlArray();
+        glUniformMatrix4fv(obj_modelview_projection_param_, 1, GL_FALSE,
+                           room_array.data());
+
+        // Bind texture
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_EXTERNAL_OES, cam_texture_);
+
+        // Draw Mesh
+        glEnableVertexAttribArray(obj_position_param_);
+        glVertexAttribPointer(obj_position_param_, 3, GL_FLOAT, false, 0,
+                               plane_vert);
+        glEnableVertexAttribArray(obj_uv_param_);
+        glVertexAttribPointer(obj_uv_param_, 2, GL_FLOAT, false, 0, plane_tex_coords);
+
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        CHECKGLERROR("DrawRoom");
+    }
+
+}  // namespace ndk_hello_cardboard

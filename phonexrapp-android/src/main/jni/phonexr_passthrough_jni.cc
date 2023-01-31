@@ -51,21 +51,20 @@ JNI_METHOD(jlong, nativeOnCreate)
     return jptr(new ndk_phonexr::PhoneXRPassthrough(javaVm, obj));
 }
 
+JNI_METHOD(jint, nativeOnSurfaceCreated)
+(JNIEnv* , jobject /*obj*/, jlong native_app) {
+    GLuint res = native(native_app)->OnSurfaceCreated();
+    return res;
+}
+
 JNI_METHOD(void, nativeOnDestroy)
 (JNIEnv* /*env*/, jobject /*obj*/, jlong native_app) {
 delete native(native_app);
 }
 
-JNI_METHOD(void, nativeSetTextureId)
-(JNIEnv* env, jobject /*obj*/, jlong native_app, jint textureId) {
-native(native_app)->setTextureId((GLuint) textureId);
-}
-
 JNI_METHOD(void, nativeOnDrawFrame)
-(JNIEnv *env, jobject /*obj*/, jlong native_app, jobject thread) {
-    jclass renderThread = env->GetObjectClass(thread);
-    jmethodID method = env->GetMethodID(renderThread, "innerDraw","([F)V");
-native(native_app)->OnDrawFrame(env, thread, method);
+(JNIEnv*, jobject /*obj*/, jlong native_app) {
+native(native_app)->OnDrawFrame();
 }
 
 JNI_METHOD(void, nativeOnPause)

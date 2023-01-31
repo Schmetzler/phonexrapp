@@ -35,8 +35,6 @@ namespace ndk_phonexr {
 
         ~PhoneXRPassthrough();
 
-        void setTextureId(GLuint texture);
-
         /**
          * Sets screen parameters.
          *
@@ -48,7 +46,7 @@ namespace ndk_phonexr {
         /**
          * Draws the scene. This should be called on the rendering thread.
          */
-        void OnDrawFrame(JNIEnv* env, jobject obj, jmethodID id);
+        void OnDrawFrame();
 
         /**
          * Pauses head tracking.
@@ -72,7 +70,9 @@ namespace ndk_phonexr {
          */
         Matrix4x4 GetPose();
 
-    private:
+        GLuint OnSurfaceCreated();
+
+        private:
         /**
          * Default near clip plane z-axis coordinate.
          */
@@ -90,7 +90,7 @@ namespace ndk_phonexr {
          */
         bool UpdateDeviceParams();
 
-        void drawCameraTexture();
+        void drawPlane();
 
         GLuint createProgram(const char* vertex, const char* fragment);
 
@@ -122,12 +122,17 @@ namespace ndk_phonexr {
         GLuint depthRenderBuffer_;  // depth buffer
         GLuint framebuffer_;        // framebuffer object
         GLuint texture_;            // distortion texture
-        GLuint cam_texture_;
-        GLuint program_;
+
+        GLuint obj_program_;
+        GLuint obj_position_param_;
+        GLuint obj_uv_param_;
+        GLuint obj_modelview_projection_param_;
+
+        Matrix4x4 modelview_projection_room_;
+
+        GLuint cam_texture_{0};
 
         Matrix4x4 head_view_;
-
-        JNIEnv* env;
     };
 
 }  // namespace ndk_hello_cardboard
