@@ -92,6 +92,8 @@ namespace ndk_phonexr {
 
         void drawPlane();
 
+        void drawTestPlane();
+
         GLuint createProgram(const char* vertex, const char* fragment);
 
         /**

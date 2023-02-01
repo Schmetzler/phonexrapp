@@ -31,18 +31,23 @@ namespace ndk_phonexr {
 
     namespace {
         float plane_vert[] = {
-                0.0,0.0,0.0,
-                1.0,0.0,0.0,
-                1.0,1.0,0.0,
-                0.0,1.0,0.0
+                -1.0,1.0,
+                1.0,1.0,
+                1.0,-1.0,
+                -1.0,-1.0,
+                -1.0,-1.0,
+                1.0,1.0
         };
 
         float plane_tex_coords[] = {
                 0.0,0.0,
                 0.0,1.0,
-                1.0,1.0,
-                1.0,0.0
+                1.0,0.0,
+                1.0,1.0
         };
+
+        static GLuint testprogram;
+        static const bool TEST = true;
 
 // The objects are about 1 meter in radius, so the min/max target distance are
 // set so that the objects are always within the room (which is about 5 meters
@@ -73,7 +78,7 @@ namespace ndk_phonexr {
 
     void main() {
       v_UV = a_UV;
-      gl_Position = u_MVP * a_Position;
+      gl_Position = a_Position;
     })glsl";
 
         constexpr const char* kObjFragmentShader =
@@ -85,6 +90,15 @@ namespace ndk_phonexr {
     void main() {
         gl_FragColor = texture2D(sTexture, v_UV);
     })glsl";
+
+        constexpr const char* testFragment =
+                R"glsl(
+        precision mediump float;
+        varying vec2 v_UV;
+        void main() {
+             gl_FragColor = vec4(1,0,0,1);
+        }
+        )glsl";
 
     }  // anonymous namespace
 
@@ -102,7 +116,7 @@ namespace ndk_phonexr {
               obj_program_(0),
               obj_position_param_(0),
               obj_uv_param_(0),
-              obj_modelview_projection_param_(0)) {
+              obj_modelview_projection_param_(0) {
         JNIEnv* env;
         vm->GetEnv((void**)&env, JNI_VERSION_1_6);
 
@@ -121,15 +135,20 @@ namespace ndk_phonexr {
                 LoadGLShader(GL_VERTEX_SHADER, kObjVertexShader);
         const int obj_fragment_shader =
                 LoadGLShader(GL_FRAGMENT_SHADER, kObjFragmentShader);
+        const int test_fragment =
+                LoadGLShader(GL_FRAGMENT_SHADER, testFragment);
+
+        testprogram = glCreateProgram();
+        glAttachShader(testprogram, obj_vertex_shader);
+        glAttachShader(testprogram, test_fragment);
+        glLinkProgram(testprogram);
 
         obj_program_ = glCreateProgram();
         glAttachShader(obj_program_, obj_vertex_shader);
         glAttachShader(obj_program_, obj_fragment_shader);
         glLinkProgram(obj_program_);
+
         glUseProgram(obj_program_);
-
-        CHECKGLERROR("Obj program");
-
         obj_position_param_ = glGetAttribLocation(obj_program_, "a_Position");
         obj_uv_param_ = glGetAttribLocation(obj_program_, "a_UV");
         obj_modelview_projection_param_ = glGetUniformLocation(obj_program_, "u_MVP");
@@ -182,6 +201,7 @@ namespace ndk_phonexr {
                        screen_height_);
 
             Matrix4x4 eye_matrix = GetMatrixFromGlArray(eye_matrices_[eye]);
+            //Matrix4x4 eye_view = eye_matrix;// * head_view_;
             Matrix4x4 eye_view = eye_matrix * head_view_;
 
             Matrix4x4 projection_matrix =
@@ -354,21 +374,39 @@ namespace ndk_phonexr {
                Quatf::FromXYZW(&out_orientation[0]).ToMatrix();
     }
 
-     void PhoneXRPassthrough::drawPlane() {
-        glUseProgram(obj_program_);
+    void PhoneXRPassthrough::drawTestPlane() {
+        glUseProgram(testprogram);
+        GLuint position_param_ = glGetAttribLocation(testprogram, "a_Position");
+        GLuint uv_param_ = glGetAttribLocation(testprogram, "a_UV");
+        GLuint modelview_projection_param_ = glGetUniformLocation(testprogram, "u_MVP");
 
         std::array<float, 16> room_array = modelview_projection_room_.ToGlArray();
-        glUniformMatrix4fv(obj_modelview_projection_param_, 1, GL_FALSE,
+        glUniformMatrix4fv(modelview_projection_param_, 1, GL_FALSE,
                            room_array.data());
+        // Draw Mesh
+        glEnableVertexAttribArray(position_param_);
+        glVertexAttribPointer(position_param_, 3, GL_FLOAT, false, 0,
+                              plane_vert);
+        glEnableVertexAttribArray(uv_param_);
+        glVertexAttribPointer(uv_param_, 2, GL_FLOAT, false, 0, plane_tex_coords);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
 
+     void PhoneXRPassthrough::drawPlane() {
+
+        glUseProgram(obj_program_);
         // Bind texture
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_EXTERNAL_OES, cam_texture_);
 
+        std::array<float, 16> room_array = modelview_projection_room_.ToGlArray();
+        glUniformMatrix4fv(obj_modelview_projection_param_, 1, GL_FALSE,
+                            room_array.data());
+
         // Draw Mesh
         glEnableVertexAttribArray(obj_position_param_);
-        glVertexAttribPointer(obj_position_param_, 3, GL_FLOAT, false, 0,
-                               plane_vert);
+        glVertexAttribPointer(obj_position_param_, 2, GL_FLOAT, false, 0,
+                              plane_vert);
         glEnableVertexAttribArray(obj_uv_param_);
         glVertexAttribPointer(obj_uv_param_, 2, GL_FLOAT, false, 0, plane_tex_coords);
 

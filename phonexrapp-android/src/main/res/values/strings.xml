@@ -21,4 +21,8 @@
     <string name="attachment_summary_on">Automatically download attachments for incoming emails
     </string>
     <string name="attachment_summary_off">Only download attachments when manually requested</string>
+    <string name="switch_viewer"
+        description="Short text shown on the settings menu to let the user switch viewer.
+                         [CHAR_LIMIT=30]">
+        Switch Cardboard viewer</string>
 </resources>

@@ -23,7 +23,7 @@
 
 #define JNI_METHOD(return_type, method_name) \
   JNIEXPORT return_type JNICALL              \
-      Java_de_lifecapture_phonexrapp_CameraTextureActivity_##method_name
+      Java_de_lifecapture_phonexrapp_VrActivity_##method_name
 
 namespace {
 

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.android.grafika.puttogether;
+package de.lifecapture.phonexrapp;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
@@ -46,7 +46,6 @@ import java.io.IOException;
 
 import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
-import de.lifecapture.phonexrapp.R;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
@@ -78,6 +77,8 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
     private long nativeApp;
 
     private GLSurfaceView glView;
+
+    private Camera mCamera = null;
 
     @SuppressLint("ClickableViewAccessibility")
     @Override
@@ -125,9 +126,6 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
     protected void onResume() {
         super.onResume();
 
-        glView.onResume();
-        nativeOnResume(nativeApp);
-
         // On Android P and below, checks for activity to READ_EXTERNAL_STORAGE. When it is not granted,
         // the application will request them. For Android Q and above, READ_EXTERNAL_STORAGE is optional
         // and scoped storage will be used instead. If it is provided (but not checked) and there are
@@ -137,9 +135,14 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
             return;
         }
 
+        glView.onResume();
+        nativeOnResume(nativeApp);
+
         if (mCamera == null) {
             openCamera(VID_WIDTH, VID_HEIGHT, FPS);
         }
+
+
         //if (mEglCore != null) {
         //startPreview();
         //}
@@ -166,17 +169,12 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
     private FullFrameRect mFullFrameBlit = null;
     private int mTextureId = 0;
     private SurfaceTexture mCameraTexture = null;
-    private Camera mCamera = null;
 
-    private class Renderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableListener {
+    private class Renderer implements GLSurfaceView.Renderer {
         @Override
         public void onSurfaceCreated(GL10 gl10, EGLConfig eglConfig) {
-            mFullFrameBlit = new FullFrameRect(
-                    new Texture2dProgram(Texture2dProgram.ProgramType.TEXTURE_EXT));
-            mTextureId = mFullFrameBlit.createTextureObject();
+            mTextureId = nativeOnSurfaceCreated(nativeApp);
             mCameraTexture = new SurfaceTexture(mTextureId);
-            mCameraTexture.setOnFrameAvailableListener(this);
-            nativeSetTextureId(nativeApp, mTextureId);
             startPreview();
         }
 
@@ -187,15 +185,8 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
 
         @Override
         public void onDrawFrame(GL10 gl10) {
+            mCameraTexture.updateTexImage();
             nativeOnDrawFrame(nativeApp);
-        }
-
-        @Override
-        public void onFrameAvailable(SurfaceTexture surfaceTexture) {
-            //GLES20.glActiveTexture(GLES20.GL_TEXTURE1);
-            //mCameraTexture.updateTexImage();
-            //nativeOnDrawFrame(nativeApp);
-            //TODO mHandler.sendEmptyMessage(MainHandler.MSG_FRAME_AVAILABLE);
         }
     }
 
@@ -248,7 +239,7 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
 
         Camera.CameraInfo info = new Camera.CameraInfo();
 
-        // Try to find a front-facing camera (e.g. for videoconferencing).
+        // Try to find a back-facing camera.
         int numCameras = Camera.getNumberOfCameras();
         for (int i = 0; i < numCameras; i++) {
             Camera.getCameraInfo(i, info);
@@ -258,7 +249,7 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
             }
         }
         if (mCamera == null) {
-            Log.d(TAG, "No front-facing camera found; opening default");
+            Log.d(TAG, "No back-facing camera found; opening default");
             mCamera = Camera.open();    // opens first back-facing camera
         }
         if (mCamera == null) {
@@ -369,9 +360,9 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
 
     private native long nativeOnCreate();
 
-    private native void nativeOnDestroy(long nativeApp);
+    private native int nativeOnSurfaceCreated(long nativeApp);
 
-    private native void nativeSetTextureId(long nativeApp, int textureId);
+    private native void nativeOnDestroy(long nativeApp);
 
     private native void nativeOnDrawFrame(long nativeApp);
 

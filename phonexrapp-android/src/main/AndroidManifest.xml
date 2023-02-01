@@ -3,10 +3,14 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.CAMERA" />
 
     <uses-feature android:name="android.hardware.camera" />
     <uses-feature android:name="android.hardware.camera.autofocus" />
+    <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="true"/>
+    <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="true"/>
 
     <application
         android:allowBackup="true"
@@ -27,14 +31,12 @@
                 android:value="" />
         </activity>
         <activity
-            android:name=".CameraView"
-            android:configChanges="orientation|keyboardHidden|screenSize"
+            android:name=".VrActivity"
+            android:screenOrientation="landscape"
             android:exported="true"
-            android:label="@string/title_activity_camera_view"
             android:theme="@style/Theme.PhoneXR.Fullscreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>

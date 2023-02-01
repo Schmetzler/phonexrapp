@@ -41,6 +41,14 @@ android {
     externalNativeBuild.cmake {
         path "CMakeLists.txt"
     }
+
+    sourceSets {
+        main {
+            java {
+                exclude "/com/android/grafika/puttogether/**"
+            }
+        }
+    }
 }
 
 dependencies {
