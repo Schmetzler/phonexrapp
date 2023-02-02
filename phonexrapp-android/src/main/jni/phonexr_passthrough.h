@@ -72,6 +72,8 @@ namespace ndk_phonexr {
 
         GLuint OnSurfaceCreated();
 
+        void SetPassthroughSize(float size);
+
         private:
         /**
          * Default near clip plane z-axis coordinate.
@@ -90,12 +92,9 @@ namespace ndk_phonexr {
          */
         bool UpdateDeviceParams();
 
-        void drawPlane();
+        void createPassthroughPlane();
 
-        void drawTestPlane();
-
-        GLuint createProgram(const char* vertex, const char* fragment);
-
+        void drawPassthroughPlane();
         /**
          * Initializes GL environment.
          */
@@ -133,6 +132,8 @@ namespace ndk_phonexr {
         Matrix4x4 modelview_projection_room_;
 
         GLuint cam_texture_{0};
+        float passthrough_size = 0.5;
+        float passthrough_vertices[8];
 
         Matrix4x4 head_view_;
     };

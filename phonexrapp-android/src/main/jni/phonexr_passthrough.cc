@@ -30,20 +30,24 @@
 namespace ndk_phonexr {
 
     namespace {
+        float size = 1;
+        float x0 = -size, y0 =  size; // Top left
+        float x1 =  size, y1 =  size; // Top right
+        float x2 =  size, y2 = -size; // Bottom right
+        float x3 = -size, y3 = -size; // Bottom left
+
         float plane_vert[] = {
-                -1.0,1.0,
-                1.0,1.0,
-                1.0,-1.0,
-                -1.0,-1.0,
-                -1.0,-1.0,
-                1.0,1.0
+                x3,y3,
+                x2,y2,
+                x0,y0,
+                x1,y1,
         };
 
         float plane_tex_coords[] = {
-                0.0,0.0,
                 0.0,1.0,
-                1.0,0.0,
-                1.0,1.0
+                1.0,1.0,
+                0.0,0.0,
+                1.0,0.0
         };
 
         static GLuint testprogram;
@@ -122,6 +126,7 @@ namespace ndk_phonexr {
 
         Cardboard_initializeAndroid(vm, obj);
         head_tracker_ = CardboardHeadTracker_create();
+        createPassthroughPlane();
     }
 
     PhoneXRPassthrough::~PhoneXRPassthrough() {
@@ -201,15 +206,15 @@ namespace ndk_phonexr {
                        screen_height_);
 
             Matrix4x4 eye_matrix = GetMatrixFromGlArray(eye_matrices_[eye]);
-            //Matrix4x4 eye_view = eye_matrix;// * head_view_;
-            Matrix4x4 eye_view = eye_matrix * head_view_;
+            Matrix4x4 eye_view = eye_matrix;// * head_view_;
+            //Matrix4x4 eye_view = eye_matrix * head_view_;
 
             Matrix4x4 projection_matrix =
                     GetMatrixFromGlArray(projection_matrices_[eye]);
             modelview_projection_room_ = projection_matrix * eye_view;
 
-            // Draw room and target
-            drawPlane();
+            // Draw passthrough
+            drawPassthroughPlane();
         }
 
         // Render
@@ -374,39 +379,35 @@ namespace ndk_phonexr {
                Quatf::FromXYZW(&out_orientation[0]).ToMatrix();
     }
 
-    void PhoneXRPassthrough::drawTestPlane() {
-        glUseProgram(testprogram);
-        GLuint position_param_ = glGetAttribLocation(testprogram, "a_Position");
-        GLuint uv_param_ = glGetAttribLocation(testprogram, "a_UV");
-        GLuint modelview_projection_param_ = glGetUniformLocation(testprogram, "u_MVP");
+    void PhoneXRPassthrough::createPassthroughPlane() {
+        float size = passthrough_size;
+        float x0 = -size, y0 =  size; // Top left
+        float x1 =  size, y1 =  size; // Top right
+        float x2 =  size, y2 = -size; // Bottom right
+        float x3 = -size, y3 = -size; // Bottom left
 
-        std::array<float, 16> room_array = modelview_projection_room_.ToGlArray();
-        glUniformMatrix4fv(modelview_projection_param_, 1, GL_FALSE,
-                           room_array.data());
-        // Draw Mesh
-        glEnableVertexAttribArray(position_param_);
-        glVertexAttribPointer(position_param_, 3, GL_FLOAT, false, 0,
-                              plane_vert);
-        glEnableVertexAttribArray(uv_param_);
-        glVertexAttribPointer(uv_param_, 2, GL_FLOAT, false, 0, plane_tex_coords);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        passthrough_vertices[0] = x3; passthrough_vertices[1] = y3;
+        passthrough_vertices[2] = x2; passthrough_vertices[3] = y2;
+        passthrough_vertices[4] = x0; passthrough_vertices[5] = y0;
+        passthrough_vertices[6] = x1; passthrough_vertices[7] = y1;
     }
 
-     void PhoneXRPassthrough::drawPlane() {
+    void PhoneXRPassthrough::SetPassthroughSize(float size) {
+        passthrough_size = size;
+        createPassthroughPlane();
+    }
+
+     void PhoneXRPassthrough::drawPassthroughPlane() {
 
         glUseProgram(obj_program_);
         // Bind texture
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_EXTERNAL_OES, cam_texture_);
 
-        std::array<float, 16> room_array = modelview_projection_room_.ToGlArray();
-        glUniformMatrix4fv(obj_modelview_projection_param_, 1, GL_FALSE,
-                            room_array.data());
-
         // Draw Mesh
         glEnableVertexAttribArray(obj_position_param_);
         glVertexAttribPointer(obj_position_param_, 2, GL_FLOAT, false, 0,
-                              plane_vert);
+                              passthrough_vertices);
         glEnableVertexAttribArray(obj_uv_param_);
         glVertexAttribPointer(obj_uv_param_, 2, GL_FLOAT, false, 0, plane_tex_coords);
 

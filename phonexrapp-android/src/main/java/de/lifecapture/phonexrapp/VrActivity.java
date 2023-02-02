@@ -29,6 +29,7 @@ import android.os.Bundle;
 import android.provider.Settings;
 import androidx.appcompat.app.AppCompatActivity;
 import android.util.Log;
+import android.util.Size;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
@@ -36,19 +37,24 @@ import android.view.WindowManager;
 import android.widget.PopupMenu;
 import android.widget.Toast;
 
-import com.android.grafika.CameraUtils;
 import com.android.grafika.gles.EglCore;
 import com.android.grafika.gles.FullFrameRect;
-import com.android.grafika.gles.Texture2dProgram;
 import com.android.grafika.gles.WindowSurface;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.List;
+import java.util.stream.Collectors;
 
 import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
+
+import static java.lang.Integer.min;
 
 /**
  * A Google Cardboard VR NDK sample application.
@@ -57,6 +63,7 @@ import javax.microedition.khronos.opengles.GL10;
  * rendering.
  */
 // TODO(b/184737638): Remove decorator once the AndroidX migration is completed.
+// TODO Available Settings: Passthrough size, recording_hint (passthrough/normal), PreviewSize, Passthrough or Normal
 @SuppressWarnings("deprecation")
 public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuItemClickListener {
     static {
@@ -70,7 +77,6 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
 
     private final int VID_WIDTH = 1280;
     private final int VID_HEIGHT = 960;
-    private final int FPS = 30;
 
     // Opaque native pointer to the native CardboardApp instance.
     // This object is owned by the VrActivity instance and passed to the native methods.
@@ -89,7 +95,7 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
 
         setContentView(R.layout.vr_activity_view);
         glView = findViewById(R.id.surface_view);
-        glView.setEGLContextClientVersion(3);
+        glView.setEGLContextClientVersion(2);
         Renderer renderer = new Renderer();
         glView.setRenderer(renderer);
         glView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
@@ -135,13 +141,12 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
             return;
         }
 
-        glView.onResume();
-        nativeOnResume(nativeApp);
-
         if (mCamera == null) {
-            openCamera(VID_WIDTH, VID_HEIGHT, FPS);
+            openCamera(VID_WIDTH, VID_HEIGHT);
         }
 
+        glView.onResume();
+        nativeOnResume(nativeApp);
 
         //if (mEglCore != null) {
         //startPreview();
@@ -228,11 +233,51 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
     }
 
     /**
+     * Given `choices` of `Size`s supported by a camera, chooses the smallest one whose
+     * width and height are at least as large as the minimum of both, or an exact match if possible.
+     *
+     * @param choices The list of sizes that the camera supports for the intended output class
+     * @param width The minimum desired width
+     * @param height The minimum desired height
+     * @return The optimal `Size`, or an arbitrary one if none were big enough
+     */
+    protected Size chooseOptimalSize(List<Size> choices, int width, int height) {
+        int minSize = Integer.max(
+                Integer.min(width, height),
+                320
+        );
+        Size desiredSize = new Size(width, height);
+
+        // Collect the supported resolutions that are at least as big as the preview Surface
+        boolean exactSizeFound = false;
+        List<Size> bigEnough = new ArrayList<>();
+        for (Size option : choices) {
+            if (option == desiredSize) {
+                // Set the size but don't return yet so that remaining sizes will still be logged.
+                exactSizeFound = true;
+            }
+            if (option.getHeight() >= minSize && option.getWidth() >= minSize) {
+                bigEnough.add(option);
+            }
+        }
+        if (exactSizeFound) {
+            return desiredSize;
+        }
+
+        // Pick the smallest of those, assuming we found any
+        if (bigEnough.size() > 0) {
+            return Collections.min(bigEnough, Comparator.comparingInt(lhs -> lhs.getWidth() * lhs.getHeight()));
+        } else {
+            return choices.get(0);
+        }
+    }
+
+    /**
      * Opens a camera, and attempts to establish preview mode at the specified width and height.
      * <p>
      * Sets mCameraPreviewFps to the expected frame rate (which might actually be variable).
      */
-    private void openCamera(int desiredWidth, int desiredHeight, int desiredFps) {
+    private void openCamera(int desiredWidth, int desiredHeight) {
         if (mCamera != null) {
             throw new RuntimeException("camera already initialized");
         }
@@ -257,21 +302,32 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
         }
 
         Camera.Parameters parms = mCamera.getParameters();
+        List<Camera.Size> choices_ = parms.getSupportedPreviewSizes();
+        List<Size> choices = choices_.stream().map(
+                in -> new Size(in.width, in.height)
+        ).collect(Collectors.toList());
 
-        CameraUtils.choosePreviewSize(parms, desiredWidth, desiredHeight);
+        Size optimal = chooseOptimalSize(choices, desiredWidth, desiredHeight);
+        parms.setPreviewSize(optimal.getWidth(),optimal.getHeight());
+
+        for (Size choice : choices) {
+            Log.d("PrevSize", choice.toString());
+        }
 
         // Try to set the frame rate to a constant value.
-        int mCameraPreviewThousandFps = CameraUtils.chooseFixedPreviewFps(parms, desiredFps * 1000);
+        //int mCameraPreviewThousandFps = CameraUtils.chooseFixedPreviewFps(parms, desiredFps * 1000);
 
         // Give the camera a hint that we're recording video.  This can have a big
         // impact on frame rate.
-        parms.setRecordingHint(false);
+        parms.setRecordingHint(true);
+        // TODO allow change in settings
+        // true = good for passthrough (as it is more fluid), bad for handtracking (as it has reduced size)
+        // false = good for handtracking bad for passthrough (you get sick)
+
 
         mCamera.setParameters(parms);
 
-        Camera.Size cameraPreviewSize = parms.getPreviewSize();
-        String previewFacts = cameraPreviewSize.width + "x" + cameraPreviewSize.height +
-                " @" + (mCameraPreviewThousandFps / 1000.0f) + "fps";
+        String previewFacts = optimal.getWidth() + "x" + optimal.getHeight();
         Log.i(TAG, "Camera config: " + previewFacts);
     }
 
@@ -375,4 +431,6 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
     private native void nativeSwitchViewer(long nativeApp);
 
     private native float[] nativeGetHeadPose(long nativeApp);
+
+    private native void nativeSetPassthroughSize(long nativeApp, float passthrough_size);
 }

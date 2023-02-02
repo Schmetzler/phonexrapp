@@ -27,11 +27,8 @@ import android.os.HandlerThread
 import android.util.Log
 import android.util.Size
 import android.util.SparseIntArray
-import android.view.LayoutInflater
-import android.view.Surface
+import android.view.*
 import android.view.TextureView.SurfaceTextureListener
-import android.view.View
-import android.view.ViewGroup
 import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
@@ -176,7 +173,7 @@ class CameraConnectionFragment @SuppressLint("ValidFragment") private constructo
     private var cameraId: String? = null
     private var camera: Camera? = null
     private var encoder: Encoder? = null
-    private var textureView: AutoFitTextureView? = null
+    private var textureView: TextureView? = null
     private var captureSession: CameraCaptureSession? = null
     private var cameraDevice: CameraDevice? = null
     private var sensorOrientation: Int? = null
@@ -249,7 +246,7 @@ class CameraConnectionFragment @SuppressLint("ValidFragment") private constructo
         view: View,
         savedInstanceState: Bundle?
     ) {
-        textureView = view.findViewById<View>(R.id.texture) as AutoFitTextureView
+        textureView = view.findViewById(R.id.texture)
     }
 
     override fun onResume() {
@@ -324,14 +321,6 @@ class CameraConnectionFragment @SuppressLint("ValidFragment") private constructo
                 inputSize.width,
                 inputSize.height
             )
-
-            // We fit the aspect ratio of TextureView to the size of preview we picked.
-            val orientation = resources.configuration.orientation
-            if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                textureView!!.setAspectRatio(previewSize!!.width, previewSize!!.height)
-            } else {
-                textureView!!.setAspectRatio(previewSize!!.height, previewSize!!.width)
-            }
         } catch (e: CameraAccessException) {
             //  LOGGER.e(e, "Exception!");
         } catch (e: NullPointerException) {
@@ -365,12 +354,6 @@ class CameraConnectionFragment @SuppressLint("ValidFragment") private constructo
             params.focusMode = Camera.Parameters.FOCUS_MODE_CONTINUOUS_VIDEO
             camera!!.parameters = params
 
-            val orientation = resources.configuration.orientation
-            if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                textureView!!.setAspectRatio(previewSize!!.width, previewSize!!.height)
-            } else {
-                textureView!!.setAspectRatio(previewSize!!.height, previewSize!!.width)
-            }
             createCameraPreview(camera!!)
             return
         }
