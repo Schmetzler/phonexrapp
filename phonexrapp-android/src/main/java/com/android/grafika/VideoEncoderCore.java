@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.android.grafika.puttogether;
+package com.android.grafika;
 
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
@@ -57,7 +57,7 @@ public class VideoEncoderCore {
     /**
      * Configures encoder and muxer state, and prepares the input Surface.
      */
-    public VideoEncoderCore(int width, int height, int bitRate, File outputFile)
+    public VideoEncoderCore(int width, int height, int bitRate)//, File outputFile)
             throws IOException {
         mBufferInfo = new MediaCodec.BufferInfo();
 
@@ -85,11 +85,11 @@ public class VideoEncoderCore {
         //
         // We're not actually interested in multiplexing audio.  We just want to convert
         // the raw H.264 elementary stream we get from MediaCodec into a .mp4 file.
-        mMuxer = new MediaMuxer(outputFile.toString(),
+        /*mMuxer = new MediaMuxer(outputFile.toString(),
                 MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
 
         mTrackIndex = -1;
-        mMuxerStarted = false;
+        mMuxerStarted = false;*/
     }
 
     /**
@@ -109,13 +109,13 @@ public class VideoEncoderCore {
             mEncoder.release();
             mEncoder = null;
         }
-        if (mMuxer != null) {
+        /*if (mMuxer != null) {
             // TODO: stop() throws an exception if you haven't fed it any data.  Keep track
             //       of frames submitted, and don't call stop() if we haven't written anything.
             mMuxer.stop();
             mMuxer.release();
             mMuxer = null;
-        }
+        }*/
     }
 
     /**
@@ -155,9 +155,9 @@ public class VideoEncoderCore {
                 Log.d(TAG, "encoder output format changed: " + newFormat);
 
                 // now that we have the Magic Goodies, start the muxer
-                mTrackIndex = mMuxer.addTrack(newFormat);
-                mMuxer.start();
-                mMuxerStarted = true;
+                //mTrackIndex = mMuxer.addTrack(newFormat);
+                //mMuxer.start();
+                //mMuxerStarted = true;
             } else if (encoderStatus < 0) {
                 Log.w(TAG, "unexpected result from encoder.dequeueOutputBuffer: " +
                         encoderStatus);
@@ -185,7 +185,7 @@ public class VideoEncoderCore {
                     encodedData.position(mBufferInfo.offset);
                     encodedData.limit(mBufferInfo.offset + mBufferInfo.size);
 
-                    mMuxer.writeSampleData(mTrackIndex, encodedData, mBufferInfo);
+                    //mMuxer.writeSampleData(mTrackIndex, encodedData, mBufferInfo);
                     if (VERBOSE) {
                         Log.d(TAG, "sent " + mBufferInfo.size + " bytes to muxer, ts=" +
                                 mBufferInfo.presentationTimeUs);

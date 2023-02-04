@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.android.grafika.puttogether;
+package com.android.grafika;
 
 import android.os.Handler;
 import android.os.Looper;

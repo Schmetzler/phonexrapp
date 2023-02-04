@@ -7,32 +7,37 @@ import android.media.MediaFormat
 import android.media.MediaFormat.MIMETYPE_VIDEO_AVC
 import android.util.Log
 import android.view.Surface
+import java.nio.ByteBuffer
 
-class Encoder(val width : Int, val height : Int, format : String = MIMETYPE_VIDEO_AVC) {
+class Encoder(val width : Int, val height : Int, val bitrate : Int, val mainActivity: VrActivity, format : String = MIMETYPE_VIDEO_AVC) {
     val mediaFormat = MediaFormat.createVideoFormat(format, width, height)
     val codecName = MediaCodecList(MediaCodecList.ALL_CODECS).findEncoderForFormat(mediaFormat)
     val mediaCodec = MediaCodec.createByCodecName(codecName)
     var surface: Surface? = null
 
-    fun start() :Surface {
+    fun start() {
         Log.d("CODEC", codecName)
-//        MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.forEach() {
-//            if (it.isEncoder) {
-//                var info = it.name
-//                it.supportedTypes.forEach {
-//                    info += " " + it
-//                }
-//                Log.d("CODEC", info)
-//            }
-//        }
         mediaFormat.setInteger(MediaFormat.KEY_FRAME_RATE, 30)
         mediaFormat.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
         mediaFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 5)
-        mediaFormat.setInteger(MediaFormat.KEY_BIT_RATE, 24000)
-        mediaCodec.configure(mediaFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        surface = mediaCodec.createInputSurface()
+        mediaFormat.setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
+        var startTime = System.nanoTime();
+        //surface = mediaCodec.createInputSurface()
         mediaCodec.setCallback(object : MediaCodec.Callback() {
-            override fun onInputBufferAvailable(p0: MediaCodec, p1: Int) {
+            override fun onInputBufferAvailable(mc: MediaCodec, inBuffId: Int) {
+                val inputBuffer = mc.getInputBuffer(inBuffId)
+                synchronized(mainActivity.encoderLock) {
+                    val time = (System.nanoTime() - startTime)/1000
+                    if (mainActivity.cur_frame == null) {
+                        mc.queueInputBuffer(0,0,0,time,MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                        Log.d("ENCODER", "Done")
+                    } else {
+                        inputBuffer?.put(mainActivity.cur_frame)
+                        val size = mainActivity.cur_frame.size
+                        mc.queueInputBuffer(inBuffId, 0, size, time, 0)
+                        Log.d("ENCODER", "Input " + size)
+                    }
+                }
                 // TODO("Not yet implemented")
             }
 
@@ -42,7 +47,7 @@ class Encoder(val width : Int, val height : Int, format : String = MIMETYPE_VIDE
                 info: MediaCodec.BufferInfo
             ) {
                 val buffer = mc.getOutputBuffer(index)
-                Log.d("ENCODER", "Length " +  buffer?.capacity())
+                Log.d("ENCODER", "Output " +  info.size)
                 mc.releaseOutputBuffer(index, false)
             }
 
@@ -54,15 +59,15 @@ class Encoder(val width : Int, val height : Int, format : String = MIMETYPE_VIDE
                 // TODO("Not yet implemented")
             }
         })
-        mediaCodec.flush()
+        mediaCodec.configure(mediaFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         mediaCodec.start()
-        return surface!!
+        // return surface!!
     }
 
     fun stop() {
         mediaCodec.stop()
         mediaCodec.release()
-        surface?.release()
-        surface = null
+        //surface?.release()
+        //surface = null
     }
 }

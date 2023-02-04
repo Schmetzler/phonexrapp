@@ -22,6 +22,7 @@ import android.content.pm.PackageManager;
 import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
 import android.net.Uri;
+import android.opengl.EGL14;
 import android.opengl.GLSurfaceView;
 import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
@@ -32,11 +33,13 @@ import android.util.Log;
 import android.util.Size;
 import android.view.MenuInflater;
 import android.view.MenuItem;
+import android.view.Surface;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.PopupMenu;
 import android.widget.Toast;
 
+import com.android.grafika.VideoEncoderCore;
 import com.android.grafika.gles.EglCore;
 import com.android.grafika.gles.FullFrameRect;
 import com.android.grafika.gles.WindowSurface;
@@ -48,11 +51,15 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import javax.microedition.khronos.egl.EGL10;
+import javax.microedition.khronos.egl.EGLConfig;
+import javax.microedition.khronos.egl.EGLContext;
+import javax.microedition.khronos.egl.EGLDisplay;
+import javax.microedition.khronos.egl.EGLSurface;
+import javax.microedition.khronos.opengles.GL10;
+
 import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
-
-import javax.microedition.khronos.egl.EGLConfig;
-import javax.microedition.khronos.opengles.GL10;
 
 import static java.lang.Integer.min;
 
@@ -85,6 +92,10 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
     private GLSurfaceView glView;
 
     private Camera mCamera = null;
+    private Encoder mEncoder = null;
+    public byte[] cur_frame;
+    private Size mPreviewSize = null;
+    public final Object encoderLock = new Object();
 
     @SuppressLint("ClickableViewAccessibility")
     @Override
@@ -95,7 +106,7 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
 
         setContentView(R.layout.vr_activity_view);
         glView = findViewById(R.id.surface_view);
-        glView.setEGLContextClientVersion(2);
+        glView.setEGLContextClientVersion(3);
         Renderer renderer = new Renderer();
         glView.setRenderer(renderer);
         glView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
@@ -144,6 +155,13 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
         if (mCamera == null) {
             openCamera(VID_WIDTH, VID_HEIGHT);
         }
+        if (mEncoder == null) {
+            mEncoder = new Encoder(
+                    mPreviewSize.getWidth(),
+                    mPreviewSize.getHeight(),
+                    30000,this, "video/avc"
+            );
+        }
 
         glView.onResume();
         nativeOnResume(nativeApp);
@@ -174,12 +192,33 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
     private FullFrameRect mFullFrameBlit = null;
     private int mTextureId = 0;
     private SurfaceTexture mCameraTexture = null;
+    private EGLSurface mEncoderSurface = null;
+    private VideoEncoderCore mEncoderCore = null;
 
     private class Renderer implements GLSurfaceView.Renderer {
         @Override
         public void onSurfaceCreated(GL10 gl10, EGLConfig eglConfig) {
             mTextureId = nativeOnSurfaceCreated(nativeApp);
             mCameraTexture = new SurfaceTexture(mTextureId);
+
+            /*try {
+                mEncoderCore = new VideoEncoderCore(VID_WIDTH, VID_HEIGHT, 20000);
+            } catch (IOException e) {
+                Log.d(TAG, "Dont encode");
+            }
+
+            EGL10 egl = (EGL10) EGLContext.getEGL();
+
+            int[] attrib_list = {
+                    EGL10.EGL_NONE
+            };
+
+            EGLDisplay display = egl.eglGetCurrentDisplay();
+            mEncoderSurface = egl.eglCreateWindowSurface(
+                    display, eglConfig, mEncoderCore.getInputSurface(), attrib_list
+            );*/
+
+
             startPreview();
         }
 
@@ -224,7 +263,12 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
      * Stops camera preview, and releases the camera to the system.
      */
     private void releaseCamera() {
+        if (mEncoder != null) {
+            mEncoder.stop();
+            mEncoder = null;
+        }
         if (mCamera != null) {
+            mCamera.setPreviewCallback(null);
             mCamera.stopPreview();
             mCamera.release();
             mCamera = null;
@@ -307,8 +351,8 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
                 in -> new Size(in.width, in.height)
         ).collect(Collectors.toList());
 
-        Size optimal = chooseOptimalSize(choices, desiredWidth, desiredHeight);
-        parms.setPreviewSize(optimal.getWidth(),optimal.getHeight());
+        mPreviewSize = chooseOptimalSize(choices, desiredWidth, desiredHeight);
+        parms.setPreviewSize(mPreviewSize.getWidth(),mPreviewSize.getHeight());
 
         for (Size choice : choices) {
             Log.d("PrevSize", choice.toString());
@@ -327,8 +371,17 @@ public class VrActivity extends AppCompatActivity implements PopupMenu.OnMenuIte
 
         mCamera.setParameters(parms);
 
-        String previewFacts = optimal.getWidth() + "x" + optimal.getHeight();
+        String previewFacts = mPreviewSize.getWidth() + "x" + mPreviewSize.getHeight();
         Log.i(TAG, "Camera config: " + previewFacts);
+
+        mCamera.setPreviewCallback((data, camera) -> {
+            synchronized (encoderLock) {
+                if (cur_frame == null) {
+                    mEncoder.start();
+                }
+                cur_frame = data;
+            }
+        });
     }
 
     /** Callback for when close button is pressed. */

@@ -44,8 +44,6 @@ import com.android.grafika.gles.Sprite2d;
 import com.android.grafika.gles.Texture2dProgram;
 import com.android.grafika.gles.WindowSurface;
 import com.android.grafika.puttogether.MiscUtils;
-import com.android.grafika.puttogether.TextureMovieEncoder2;
-import com.android.grafika.puttogether.VideoEncoderCore;
 
 import java.io.File;
 import java.io.IOException;
