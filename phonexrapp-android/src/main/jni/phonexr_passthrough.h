@@ -74,6 +74,8 @@ namespace ndk_phonexr {
 
         void SetPassthroughSize(float size);
 
+        void SetRenderViewport(int x, int y, int width, int height);
+
         private:
         /**
          * Default near clip plane z-axis coordinate.

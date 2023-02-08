@@ -104,6 +104,10 @@ namespace ndk_phonexr {
         }
         )glsl";
 
+        struct render_viewport_ {
+            int x, y, width, height;
+        } renderViewport;
+
     }  // anonymous namespace
 
     PhoneXRPassthrough::PhoneXRPassthrough(JavaVM* vm, jobject obj)
@@ -173,6 +177,11 @@ namespace ndk_phonexr {
     }
 
     void PhoneXRPassthrough::SetScreenParams(int width, int height) {
+        renderViewport.x = 0;
+        renderViewport.y = 0;
+        renderViewport.width = width;
+        renderViewport.height = height;
+
         screen_width_ = width;
         screen_height_ = height;
         screen_params_changed_ = true;
@@ -202,7 +211,7 @@ namespace ndk_phonexr {
 
         // Draw eyes views
         for (int eye = 0; eye < 2; ++eye) {
-            glViewport(eye == kLeft ? 0 : screen_width_ / 2, 0, screen_width_ / 2,
+            glViewport(eye == kLeft ? 0 : screen_width_/2, 0, screen_width_/2,
                        screen_height_);
 
             Matrix4x4 eye_matrix = GetMatrixFromGlArray(eye_matrices_[eye]);
@@ -218,9 +227,10 @@ namespace ndk_phonexr {
         }
 
         // Render
+        // Position and size can be changed
         CardboardDistortionRenderer_renderEyeToDisplay(
-                distortion_renderer_, /* target_display = */ 0, /* x = */ 0, /* y = */ 0,
-                screen_width_, screen_height_, &left_eye_texture_description_,
+                distortion_renderer_, 0, renderViewport.x, renderViewport.y,
+                renderViewport.width, renderViewport.height, &left_eye_texture_description_,
                 &right_eye_texture_description_);
 
         CHECKGLERROR("onDrawFrame");
@@ -363,8 +373,8 @@ namespace ndk_phonexr {
         framebuffer_ = 0;
         glDeleteTextures(1, &texture_);
         texture_ = 0;
-        glDeleteTextures(1, &cam_texture_);
-        cam_texture_ = 0;
+        //glDeleteTextures(1, &cam_texture_);
+        //cam_texture_ = 0;
 
         CHECKGLERROR("GlTeardown");
     }
@@ -395,6 +405,13 @@ namespace ndk_phonexr {
     void PhoneXRPassthrough::SetPassthroughSize(float size) {
         passthrough_size = size;
         createPassthroughPlane();
+    }
+
+    void PhoneXRPassthrough::SetRenderViewport(int x, int y, int width, int height) {
+        renderViewport.x = x;
+        renderViewport.y = y;
+        renderViewport.width = width;
+        renderViewport.height = height;
     }
 
      void PhoneXRPassthrough::drawPassthroughPlane() {
