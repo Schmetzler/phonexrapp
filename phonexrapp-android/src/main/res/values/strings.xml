@@ -25,4 +25,6 @@
         description="Short text shown on the settings menu to let the user switch viewer.
                          [CHAR_LIMIT=30]">
         Switch Cardboard viewer</string>
+    <string name="start_stream">Start Stream</string>
+    <string name="stop_stream">Stop Stream</string>
 </resources>

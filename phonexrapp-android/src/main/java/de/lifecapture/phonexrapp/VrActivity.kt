@@ -21,6 +21,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
 import android.hardware.Camera
+import android.hardware.Camera.PreviewCallback
 import android.net.Uri
 import android.opengl.GLSurfaceView
 import android.os.Build
@@ -35,10 +36,14 @@ import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.IOException
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.*
@@ -55,11 +60,9 @@ import javax.microedition.khronos.opengles.GL10
  */
 // TODO(b/184737638): Remove decorator once the AndroidX migration is completed.
 // TODO Available Settings: Passthrough size, recording_hint (passthrough/normal), PreviewSize, Passthrough or Normal
-class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener {
+class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener, PreviewCallback {
     private val VID_WIDTH = 1280
     private val VID_HEIGHT = 960
-    private val IPADDR = "localhost"
-    private val PORT = 50000
 
     // Opaque native pointer to the native CardboardApp instance.
     // This object is owned by the VrActivity instance and passed to the native methods.
@@ -70,7 +73,15 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener {
     var curFrame: ByteArray? = null
     private var mPreviewSize: Size? = null
     val encoderLock = Any()
-    var socket = Socket()
+    var tcpSocket = Socket()
+    var udpSocket = DatagramSocket()
+    var ipaddr: InetAddress? = null
+    var ip = "localhost"
+    var port = 50000
+    var isStreaming = false
+    var streamUdp = true
+    var passthrough = false
+    var forceEncoding = true
 
     @SuppressLint("ClickableViewAccessibility")
     public override fun onCreate(savedInstance: Bundle?) {
@@ -127,20 +138,8 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener {
             mEncoder = Encoder(
                 mPreviewSize!!.width,
                 mPreviewSize!!.height,
-                8000000, this, "video/avc"
+                8000000, "video/avc"
             )
-        }
-        if (!socket.isConnected) {
-            runBlocking {
-                launch(Dispatchers.IO)
-                {
-                    try {
-                        socket.connect(InetSocketAddress(IPADDR, PORT))
-                    } catch (e: IOException) {
-                        Log.d(TAG, "Cannot connect to server")
-                    }
-                }
-            }
         }
 
         glView!!.onResume()
@@ -217,10 +216,7 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener {
      * Stops camera preview, and releases the camera to the system.
      */
     private fun releaseCamera() {
-        if (mEncoder != null) {
-            mEncoder!!.stop()
-            mEncoder = null
-        }
+        releaseEncoder()
         if (mCamera != null) {
             mCamera!!.setPreviewCallback(null)
             mCamera!!.stopPreview()
@@ -228,9 +224,24 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener {
             mCamera = null
             Log.d(TAG, "releaseCamera -- done")
         }
-        if (!socket.isClosed) {
-            socket.close()
-            socket = Socket()
+        restartSocket()
+    }
+
+    private fun releaseEncoder() {
+        if (mEncoder != null) {
+            mEncoder!!.stop()
+            mEncoder = null
+        }
+    }
+
+    private fun restartSocket() {
+        if (!tcpSocket.isClosed) {
+            tcpSocket.close()
+            tcpSocket = Socket()
+        }
+        if (!udpSocket.isClosed) { // UDP for wifi
+            udpSocket.close()
+            udpSocket = DatagramSocket()
         }
     }
 
@@ -307,6 +318,7 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener {
         val choices = choices_.stream().map { `in`: Camera.Size -> Size(`in`.width, `in`.height) }.collect(Collectors.toList())
         mPreviewSize = chooseOptimalSize(choices, desiredWidth, desiredHeight)
         parms.setPreviewSize(mPreviewSize!!.width, mPreviewSize!!.height)
+        curFrame = ByteArray(mPreviewSize!!.width * mPreviewSize!!.height * 3)
         for (choice in choices) {
             Log.d("PrevSize", choice.toString())
         }
@@ -316,21 +328,13 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener {
 
         // Give the camera a hint that we're recording video.  This can have a big
         // impact on frame rate.
-        parms.setRecordingHint(true)
+        parms.setRecordingHint(passthrough)
         // TODO allow change in settings
         // true = good for passthrough (as it is more fluid), bad for handtracking (as it has reduced size)
         // false = good for handtracking bad for passthrough (you get sick)
         mCamera!!.parameters = parms
         val previewFacts = mPreviewSize!!.width.toString() + "x" + mPreviewSize!!.height
         Log.i(TAG, "Camera config: $previewFacts")
-        mCamera!!.setPreviewCallback { data: ByteArray?, camera: Camera? ->
-            synchronized(encoderLock) {
-                if (curFrame == null) {
-                    mEncoder!!.start()
-                }
-                curFrame = data
-            }
-        }
     }
 
     /** Callback for when close button is pressed.  */
@@ -355,7 +359,75 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener {
             nativeSwitchViewer(nativeApp)
             return true
         }
+        if (item.itemId == R.id.start_stream) {
+            startStream(item)
+            return true
+        }
         return false
+    }
+
+    fun startStream(item: MenuItem) {
+        if (!isStreaming) {
+            runBlocking {
+                launch(Dispatchers.IO) {
+                    ipaddr = InetAddress.getByName(ip)
+                    if(ipaddr == InetAddress.getByName("localhost")) {
+                        streamUdp = false
+                    }
+                }
+            }
+
+            if(!streamUdp) {
+                // wait for connection
+                runBlocking {
+                    launch(Dispatchers.IO) {
+                        // TODO set some timeout and try again
+                        tcpSocket.connect(InetSocketAddress(ipaddr, port), 0)
+                        Log.d(TAG, "Connected")
+                    }
+                }
+            }
+            // Set preview callback
+            mCamera?.setPreviewCallback(this)
+            item.title = getString(R.string.stop_stream)
+            isStreaming = true
+        } else {
+            mCamera?.setPreviewCallback(null)
+            releaseEncoder()
+            restartSocket()
+            item.title = getString(R.string.start_stream)
+            isStreaming = false
+        }
+    }
+
+    override fun onPreviewFrame(data: ByteArray?, camera: Camera?) {
+        var size = 0
+        if(forceEncoding && mEncoder != null) {
+            if(!mEncoder!!.isStarted) {
+                mEncoder!!.start()
+            }
+            size = mEncoder!!.encodeData(data!!, curFrame!!)
+            Log.d(TAG, "Encoded to $size bytes")
+        }
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            if(tcpSocket.isConnected && !forceEncoding) {
+                val ostream = tcpSocket.getOutputStream()
+                ostream.write(data, 0, data!!.size)
+                ostream.flush()
+            } else {
+                if (size > 0) {
+                    if(forceEncoding && tcpSocket.isConnected) {
+                        val ostream = tcpSocket.getOutputStream()
+                        ostream.write(curFrame, 0, size)
+                        ostream.flush()
+                    } else {
+                        val packet = DatagramPacket(curFrame, 0, size, ipaddr!!, port)
+                        udpSocket.send(packet)
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -436,4 +508,5 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener {
         // Permission request codes
         private const val PERMISSIONS_REQUEST_CODE = 2
     }
+
 }
