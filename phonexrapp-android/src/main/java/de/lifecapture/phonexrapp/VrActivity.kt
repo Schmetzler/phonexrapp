@@ -17,10 +17,11 @@ package de.lifecapture.phonexrapp
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
-import android.hardware.Camera
+import android.hardware.*
 import android.hardware.Camera.PreviewCallback
 import android.net.Uri
 import android.opengl.GLSurfaceView
@@ -42,11 +43,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.IOException
-import java.net.DatagramPacket
-import java.net.DatagramSocket
-import java.net.InetAddress
-import java.net.InetSocketAddress
-import java.net.Socket
+import java.net.*
+import java.nio.ByteBuffer
 import java.util.*
 import java.util.stream.Collectors
 import javax.microedition.khronos.egl.EGLConfig
@@ -61,32 +59,39 @@ import javax.microedition.khronos.opengles.GL10
  */
 // TODO(b/184737638): Remove decorator once the AndroidX migration is completed.
 // TODO Available Settings: Passthrough size, recording_hint (passthrough/normal), PreviewSize, Passthrough or Normal
-class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener, PreviewCallback {
+class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener, PreviewCallback, SensorEventListener {
     // Opaque native pointer to the native CardboardApp instance.
     // This object is owned by the VrActivity instance and passed to the native methods.
+
     private var nativeApp: Long = 0
     private var glView: GLSurfaceView? = null
     private var mCamera: Camera? = null
     private var mEncoder: Encoder? = null
     private var curFrame: ByteArray? = null
     private var mPreviewSize: Size? = null
-    private var tcpSocket = Socket()
+    private var tcpVideoSocket = Socket()
+    private var tcpSensorSocket = Socket()
     private var udpSocket = DatagramSocket()
     private var ipaddr: InetAddress? = null
     private var isStreaming = false
     private var passthrough = false    // If in passthrough mode or not (for setting recording hint)
+    private var accelData = floatArrayOf(0.0f, 0.0f, 0.0f)
+    private var magnetData = floatArrayOf(0.0f, 0.0f, 0.0f)
+    private var gyroData = floatArrayOf(0.0f, 0.0f, 0.0f)
+    private var sensorManager: SensorManager? = null
 
     // Changeable values (in settings)
     // Preview Size
     var previewWidth = 1280
     var previewHeight = 960
-    // Address to stream video
+    // Address to stream video and sensorData
     var ip = "localhost"
-    var port = 50000
+    var videoPort = 50000
+    var sensorPort = 50001
     // Whether it should be streamed via UDP will be set to false if IP is localhost
     var streamUdp = true
     // Force encoding, usually encoding is not needed for Fast USB connection (this may change in the future)
-    var forceEncoding = true
+    var forceEncoding = false
     // the size of the passthrough relative to vr screen
     var passthroughSize = 0.5f
     // the Render viewport size... to be able to move the cardboard distortion around
@@ -97,6 +102,8 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener, Previ
     var vpWidth = 0
     // Whether the center guide is visible or not
     var centerGuideVisible = false
+    // The camera to show
+    var camNr = 1
 
     @SuppressLint("ClickableViewAccessibility")
     public override fun onCreate(savedInstance: Bundle?) {
@@ -128,8 +135,68 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener, Previ
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
+    override fun onSensorChanged(event: SensorEvent?) {
+        val sensor = event!!.sensor;
+        val arr = when(sensor.type) {
+            Sensor.TYPE_ACCELEROMETER -> accelData
+            Sensor.TYPE_MAGNETIC_FIELD -> magnetData
+            Sensor.TYPE_GYROSCOPE -> gyroData
+            else -> null
+        }
+        if (arr != null) {
+            arr[0] = event.values[0]
+            arr[1] = event.values[1]
+            arr[2] = event.values[2]
+            if (sensor.type == Sensor.TYPE_ACCELEROMETER) {
+                sendSensor()
+            }
+        }
+    }
+
+    private fun sendSensor() {
+        val buffer = ByteBuffer.allocate(16*4+3*3*4)
+        val headpose = nativeGetHeadPose(nativeApp)
+        for(f in headpose!!){
+            buffer.putFloat(f)
+        }
+        for(f in accelData) {
+            buffer.putFloat(f)
+        }
+        for(f in gyroData) {
+            buffer.putFloat(f)
+        }
+        for(f in magnetData) {
+            buffer.putFloat(f)
+        }
+        buffer.rewind()
+        if(isStreaming) {
+            lifecycleScope.launch(Dispatchers.IO) {
+                if (ipaddr == null) {
+                    ipaddr = InetAddress.getByName(ip)
+                    if (ipaddr == InetAddress.getByName("localhost")) {
+                        streamUdp = false
+                    }
+                }
+                if (streamUdp) {
+                    val packet = DatagramPacket(buffer.array(), 0, buffer.limit(), ipaddr, sensorPort)
+                    udpSocket.send(packet)
+                } else {
+                    if(tcpSensorSocket.isConnected) {
+                        val ostream = tcpSensorSocket.getOutputStream()
+                        ostream.write(buffer.array(), 0, buffer.limit())
+                        ostream.flush()
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+    }
+
     override fun onPause() {
         super.onPause()
+        sensorManager?.unregisterListener(this)
         nativeOnPause(nativeApp)
         glView!!.onPause()
         releaseCamera()
@@ -137,6 +204,14 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener, Previ
 
     override fun onResume() {
         super.onResume()
+
+        if(sensorManager == null) {
+            sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        }
+        sensorManager?.registerListener(this, sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE), SensorManager.SENSOR_DELAY_GAME)
+        sensorManager?.registerListener(this, sensorManager?.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD), SensorManager.SENSOR_DELAY_GAME)
+        sensorManager?.registerListener(this, sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER), SensorManager.SENSOR_DELAY_GAME)
+
 
         // TODO maybe adjust position to RenderviewPort
         val guide = findViewById<RelativeLayout>(R.id.ui_alignment_marker)
@@ -162,17 +237,14 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener, Previ
         if (mCamera == null) {
             openCamera(previewWidth, previewHeight)
         }
-        if (mEncoder == null) {
-            mEncoder = Encoder(
-                mPreviewSize!!.width,
-                mPreviewSize!!.height,
-                8000000, "video/avc"
-            )
-        }
+
+        recreateEncoder()
 
         glView!!.onResume()
         nativeOnResume(nativeApp)
         nativeSetPassthroughSize(nativeApp, passthroughSize)
+
+
 
         //if (mEglCore != null) {
         //startPreview();
@@ -228,6 +300,15 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener, Previ
         }
     }
 
+    private fun recreateEncoder() {
+        releaseEncoder()
+        mEncoder = Encoder(
+            mPreviewSize!!.width,
+            mPreviewSize!!.height,
+            8000000, "video/avc"
+        )
+    }
+
     /**
      * Stops camera preview, and releases the camera to the system.
      */
@@ -251,14 +332,18 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener, Previ
     }
 
     private fun restartSocket() {
-        if (!tcpSocket.isClosed) {
-            tcpSocket.close()
-            tcpSocket = Socket()
+        if (!tcpVideoSocket.isClosed) {
+            tcpVideoSocket.close()
         }
+        tcpVideoSocket = Socket()
+        if (!tcpSensorSocket.isClosed) {
+            tcpSensorSocket.close()
+        }
+        tcpSensorSocket = Socket()
         if (!udpSocket.isClosed) { // UDP for wifi
             udpSocket.close()
-            udpSocket = DatagramSocket()
         }
+        udpSocket = DatagramSocket()
     }
 
     /**
@@ -315,13 +400,15 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener, Previ
 
         // Try to find a back-facing camera.
         val numCameras = Camera.getNumberOfCameras()
+        mCamera = Camera.open(camNr)
+        /*
         for (i in 0 until numCameras) {
             Camera.getCameraInfo(i, info)
             if (info.facing == Camera.CameraInfo.CAMERA_FACING_BACK) {
                 mCamera = Camera.open(i)
                 break
             }
-        }
+        }*/
         if (mCamera == null) {
             Log.d(TAG, "No back-facing camera found; opening default")
             mCamera = Camera.open() // opens first back-facing camera
@@ -365,6 +452,12 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener, Previ
         val popup = PopupMenu(this, view)
         val inflater = popup.menuInflater
         inflater.inflate(R.menu.settings_menu, popup.menu)
+        val item = popup.menu.findItem(R.id.start_stream)
+        if(isStreaming) {
+            item.title = getString(R.string.stop_stream)
+        } else {
+            item.title = getString(R.string.start_stream)
+        }
         popup.setOnMenuItemClickListener(this)
         popup.show()
     }
@@ -398,51 +491,61 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener, Previ
                 runBlocking {
                     launch(Dispatchers.IO) {
                         // TODO set some timeout and try again
-                        tcpSocket.connect(InetSocketAddress(ipaddr, port), 0)
-                        Log.d(TAG, "Connected")
+                        tcpVideoSocket.connect(InetSocketAddress(ipaddr, videoPort), 0)
+                        Log.d(TAG, "Video connected to $ipaddr:$videoPort")
+                        tcpSensorSocket.connect(InetSocketAddress(ipaddr, sensorPort), 0)
+                        Log.d(TAG, "Sensors connected to $ipaddr:$sensorPort")
                     }
                 }
             }
             // Set preview callback
             mCamera?.setPreviewCallback(this)
-            item.title = getString(R.string.stop_stream)
             isStreaming = true
         } else {
             mCamera?.setPreviewCallback(null)
-            releaseEncoder()
+            recreateEncoder()
             restartSocket()
-            item.title = getString(R.string.start_stream)
             isStreaming = false
         }
     }
 
     override fun onPreviewFrame(data: ByteArray?, camera: Camera?) {
         var size = 0
+        val buffer = ByteBuffer.allocate(data!!.size + HEADER.size + 11)
         if(forceEncoding && mEncoder != null) {
             if(!mEncoder!!.isStarted) {
                 mEncoder!!.start()
             }
             size = mEncoder!!.encodeData(data!!, curFrame!!)
-            Log.d(TAG, "Encoded to $size bytes")
+            //Log.d(TAG, "Encoded to $size bytes")
+        } else {
+            buffer.put(HEADER)
+            buffer.put(1)
+            buffer.putShort(mPreviewSize!!.width.toShort())
+            buffer.putShort(mPreviewSize!!.height.toShort())
+            buffer.putShort(mPreviewSize!!.width.toShort())
+            buffer.putInt(data.size)
+            buffer.put(data)
+            buffer.rewind()
         }
 
-        lifecycleScope.launch(Dispatchers.IO) {
-            if(tcpSocket.isConnected && !forceEncoding) {
-                val ostream = tcpSocket.getOutputStream()
-                ostream.write(data, 0, data!!.size)
+        runBlocking { launch(Dispatchers.IO) {
+            if(tcpVideoSocket.isConnected && !forceEncoding) {
+                val ostream = tcpVideoSocket.getOutputStream()
+                ostream.write(buffer.array(), 0, buffer.limit())
                 ostream.flush()
             } else {
                 if (size > 0) {
-                    if(forceEncoding && tcpSocket.isConnected) {
-                        val ostream = tcpSocket.getOutputStream()
+                    if(forceEncoding && tcpVideoSocket.isConnected) {
+                        val ostream = tcpVideoSocket.getOutputStream()
                         ostream.write(curFrame, 0, size)
                         ostream.flush()
                     } else {
-                        val packet = DatagramPacket(curFrame, 0, size, ipaddr!!, port)
+                        val packet = DatagramPacket(curFrame, 0, size, ipaddr!!, videoPort)
                         udpSocket.send(packet)
                     }
                 }
-            }
+            }}
         }
     }
 
@@ -542,6 +645,7 @@ class VrActivity : AppCompatActivity(), PopupMenu.OnMenuItemClickListener, Previ
         }
 
         private val TAG = VrActivity::class.java.simpleName
+        private val HEADER = "STARTFRAME".toByteArray()//byteArrayOf(0x00,0x00,0x00,0x00,0x02)
 
         // Permission request codes
         private const val PERMISSIONS_REQUEST_CODE = 2
